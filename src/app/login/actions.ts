@@ -111,3 +111,30 @@ export async function signout() {
   revalidatePath('/', 'layout')
   redirect('/login')
 }
+
+export async function signInWithGoogle() {
+  const supabase = await createClient()
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      // After Google authenticates the user, it redirects back to this
+      // URL with a `code` param. Our /auth/callback route exchanges that
+      // code for a session — the SAME callback we built for email confirm.
+      // This is why we unified them earlier: one callback, two flows.
+      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`,
+    },
+  })
+
+  if (error) {
+    // OAuth errors here are rare (usually misconfig). Send back to login.
+    redirect('/login?message=auth-error')
+  }
+
+  // signInWithOAuth doesn't log the user in directly — it returns a URL
+  // pointing at Google's consent screen. We have to redirect the browser
+  // there. data.url is that Google URL.
+  if (data.url) {
+    redirect(data.url)
+  }
+}
