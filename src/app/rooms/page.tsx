@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { CreateRoomForm } from './create-room-form'
 import { JoinRoomForm } from './join-room-form'
+import Link  from "next/link"
 
 export default async function RoomsPage() {
   const supabase = await createClient()
@@ -54,9 +55,10 @@ export default async function RoomsPage() {
         <div className="space-y-2">
           {rooms && rooms.length > 0 ? (
             rooms.map((room) => (
-              <div
+              <Link
                 key={room.id}
-                className="flex items-center justify-between rounded-lg border border-border bg-card p-4"
+                href={`/room/${room.id}`}
+                className="flex items-center justify-between rounded-lg border border-border bg-card p-4 hover:bg-accent transition-colors"
               >
                 <div>
                   <p className="font-medium">{room.name}</p>
@@ -64,7 +66,7 @@ export default async function RoomsPage() {
                     Code: <span className="font-mono">{room.invite_code}</span>
                   </p>
                 </div>
-              </div>
+              </Link>
             ))
           ) : (
             <p className="text-sm text-muted-foreground">
