@@ -27,6 +27,7 @@ import * as Y from 'yjs'
 // runtime error 30 minutes into a demo.
 const PORT = Number(process.env.PORT ?? 1234)
 const SUPABASE_URL = process.env.SUPABASE_URL
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -60,26 +61,29 @@ const adminSupabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 // --- helpers ----------------------------------------------------------------
 
 /**
- * The Hocuspocus document name doubles as the note ID. We use it as the URL
- * path on the client (`ws://host/<noteId>`) and Hocuspocus passes it to every
- * hook as `documentName`. Wrapping the lookup in a function makes the
- * "note id == document name" decision visible and easy to change later.
+ * Document names have the shape `<type>:<id>` where type is 'note' or 'code'.
+ * This lets one Hocuspocus server serve multiple kinds of documents while
+ * routing each to the right table for auth and persistence.
  */
-function noteIdFromDocumentName(documentName: string): string {
-  return documentName
+type DocRef =
+  | { type: 'note'; id: string }
+  | { type: 'code'; id: string }
+
+function parseDocumentName(documentName: string): DocRef | null {
+  const [type, id] = documentName.split(':', 2)
+  if (!id) return null
+  if (type === 'note') return { type: 'note', id }
+  if (type === 'code') return { type: 'code', id }
+  return null
 }
 
 /**
- * Build a user-scoped Supabase client given a user JWT. This client will
- * make queries AS that user — meaning RLS policies fire with auth.uid()
- * set to that user's id. We use this for permission checks where we want
- * the database to be the gate.
+ * Build a user-scoped Supabase client given a user JWT. Queries via this
+ * client are subject to RLS as that user.
  */
 function userSupabaseFromToken(token: string): SupabaseClient {
-  return createClient(SUPABASE_URL!, process.env.SUPABASE_ANON_KEY ?? '', {
-    global: {
-      headers: { Authorization: `Bearer ${token}` },
-    },
+  return createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   })
 }
@@ -91,166 +95,115 @@ const server = new Server({
   // Hocuspocus accepts the host as 0.0.0.0 by default; fine for both local
   // dev and Railway's container networking.
 
-  // -------------------------------------------------------------------------
-  // HOOK 1: onAuthenticate — THE SECURITY GATE
-  // -------------------------------------------------------------------------
-  // Runs on every new WebSocket connection, before the document is loaded
-  // or any updates are exchanged. We have three jobs:
-  //   1. Validate the JWT the client sent (proves they are who they claim).
-  //   2. Confirm the user is a member of the room that owns this note.
-  //   3. Reject the connection if either check fails.
-  //
-  // If this hook throws, Hocuspocus closes the WebSocket. No document is
-  // loaded, no fan-out happens. This is the ONLY thing standing between
-  // a public WebSocket port and your entire users' note contents.
-  //
-  // The `token` comes from the client via `provider.token` (we'll wire that
-  // on the Tiptap side next turn). The `documentName` is the URL path.
-  //
-  // We return a `context` object that Hocuspocus attaches to every subsequent
-  // hook call for this connection — useful for storing the authenticated
-  // user id and skipping re-lookups.
-  async onAuthenticate({ token, documentName }) {
-    if (!token) {
-      // No token at all → reject. The thrown error becomes a clean close
-      // on the client side ("unauthorized").
-      throw new Error('Missing auth token')
-    }
 
-    // Step 1: validate the JWT by asking Supabase who the user is.
-    // We use the admin client here as a convenience — `getUser(token)` does
-    // not require the client to be user-scoped; it just verifies the token.
+async onAuthenticate({ token, documentName }) {
+    console.log('[onAuthenticate] documentName:', documentName, 'tokenPresent:', !!token)
+    if (!token) throw new Error('Missing auth token')
+
+    const ref = parseDocumentName(documentName)
+    if (!ref) throw new Error('Invalid document name')
+
+    // Validate the JWT — confirms the user is who they say they are.
     const { data: userData, error: userError } =
       await adminSupabase.auth.getUser(token)
-
-    if (userError || !userData?.user) {
-      throw new Error('Invalid auth token')
-    }
+    if (userError || !userData?.user) throw new Error('Invalid auth token')
     const user = userData.user
-    const noteId = noteIdFromDocumentName(documentName)
 
-    // Step 2: confirm the user is a member of the room that owns this note.
-    // We do this via the USER-SCOPED client so RLS does the work — exactly
-    // mirroring how the app reads notes. If RLS lets the user select this
-    // note, they're a member; if not, the row is invisible to them.
-    //
-    // (Yes, we could query room_members with the admin client and check by
-    // hand. Going through RLS instead means "the same policy that gates the
-    // Next.js read also gates the WebSocket connection" — one source of
-    // truth. Defense in depth and consistency in one stroke.)
+    // Permission check via RLS: select the document through the user's
+    // scope. If they're not a member of the owning room, RLS hides the
+    // row and we treat it as "not authorized" (don't distinguish from
+    // "doesn't exist" — same reason 404 vs 403 was collapsed elsewhere).
     const userSupabase = userSupabaseFromToken(token)
-    const { data: note, error: noteError } = await userSupabase
-      .from('notes')
-      .select('id, room_id')
-      .eq('id', noteId)
-      .maybeSingle()
 
-    if (noteError) {
-      console.error('onAuthenticate: note lookup error', noteError)
-      throw new Error('Authentication failed')
-    }
-    if (!note) {
-      // Either the note doesn't exist, or it does but the user isn't a
-      // member of its room (RLS hid it). We do NOT distinguish — same
-      // reason 404 vs 403 is collapsed in the app: don't leak existence.
-      throw new Error('Not authorized')
-    }
+    if (ref.type === 'note') {
+      const { data: note, error } = await userSupabase
+        .from('notes')
+        .select('id, room_id')
+        .eq('id', ref.id)
+        .maybeSingle()
+      if (error) {
+        console.error('onAuthenticate (note) lookup error', error)
+        throw new Error('Authentication failed')
+      }
+      if (!note) throw new Error('Not authorized')
 
-    // Returned object becomes `connection.context` for the rest of this
-    // connection's lifetime. Stash the user id for awareness/logging later.
-    return {
-      userId: user.id,
-      userEmail: user.email,
-      roomId: note.room_id,
-      noteId,
+      return {
+        userId: user.id,
+        userEmail: user.email,
+        roomId: note.room_id,
+        docType: 'note' as const,
+        docId: ref.id,
+      }
+    } else {
+      // code session
+      const { data: session, error } = await userSupabase
+        .from('code_sessions')
+        .select('id, room_id')
+        .eq('id', ref.id)
+        .maybeSingle()
+      if (error) {
+        console.error('onAuthenticate (code) lookup error', error)
+        throw new Error('Authentication failed')
+      }
+      if (!session) throw new Error('Not authorized')
+
+      return {
+        userId: user.id,
+        userEmail: user.email,
+        roomId: session.room_id,
+        docType: 'code' as const,
+        docId: ref.id,
+      }
     }
   },
 
-  // -------------------------------------------------------------------------
-  // HOOK 2: onLoadDocument — RECONSTRUCT FOR A NEW JOINER
-  // -------------------------------------------------------------------------
-  // Fires the FIRST time a document is opened (no in-memory Y.Doc yet) OR
-  // after the doc was evicted from memory. Our job: return a Y.Doc populated
-  // from whatever we have in Supabase.
-  //
-  // The snapshot we stored is `Y.encodeStateAsUpdate(doc)` — a binary blob
-  // representing the entire document state. To reconstruct, we create a new
-  // Y.Doc and apply the update. Note: this is the SAME pattern that would
-  // be used for an append log (apply each row); we just happen to have one
-  // row per note.
-  async onLoadDocument({ documentName, context }) {
-    const noteId = noteIdFromDocumentName(documentName)
-    // context may be undefined: this hook can fire from a connection-less
-    // path (e.g., document reload after eviction). We only log the user
-    // if we have one — never assume context.userId exists.
-    console.log(`onLoadDocument: ${noteId} user=${context?.userId ?? '(none)'}`)
+
+async onLoadDocument({ documentName, context }) {
+    const ref = parseDocumentName(documentName)
+    if (!ref) throw new Error('Invalid document name')
+
+    const table = ref.type === 'note' ? 'notes' : 'code_sessions'
+    console.log(`onLoadDocument: ${ref.type}:${ref.id} user=${context?.userId ?? '(none)'}`)
 
     const { data, error } = await adminSupabase
-      .from('notes')
+      .from(table)
       .select('ydoc_state')
-      .eq('id', noteId)
+      .eq('id', ref.id)
       .maybeSingle()
 
     if (error) {
-      // Loud log; throwing here would refuse the document load and the
-      // client would see a close. For a hackathon this is acceptable; in
-      // production you'd want a retry or fallback strategy.
-      console.error('onLoadDocument: failed to load', error)
+      console.error('onLoadDocument failed', error)
       throw new Error('Could not load document')
     }
 
-    // Create a fresh Y.Doc to populate.
     const ydoc = new Y.Doc()
-
     if (data?.ydoc_state) {
-      // Supabase returns bytea as a hex-encoded string by default with the
-      // PostgREST API ('\x...'). The Supabase JS client decodes this for us
-      // into a Uint8Array... actually, it depends. Let's normalize:
       const bytes = toUint8Array(data.ydoc_state)
       Y.applyUpdate(ydoc, bytes)
     }
-    // else: brand new note, empty Y.Doc is correct.
-
     return ydoc
   },
 
-  // -------------------------------------------------------------------------
-  // HOOK 3: onStoreDocument — DEBOUNCED PERSISTENCE
-  // -------------------------------------------------------------------------
-  // Fires after a debounce period of inactivity (default ~2s; configurable
-  // via the `debounce` option on the server). Hocuspocus hands us the live
-  // Y.Doc; we encode it and overwrite `ydoc_state`. We also bump updated_at.
-  //
-  // Important: this is the AUTHORITATIVE Y.Doc on the server, holding all
-  // merged updates from every client. We're not racing with concurrent
-  // writers from elsewhere — the in-memory doc is the single source of truth
-  // for this note while at least one client is connected.
   async onStoreDocument({ documentName, document, context }) {
-    const noteId = noteIdFromDocumentName(documentName)
-    // context is often undefined for store: the hook fires on a debounce
-    // and represents the merged state of many users' edits (possibly
-    // after some of them disconnected). Don't assume it exists.
-    console.log(`onStoreDocument: ${noteId} user=${context?.userId ?? '(none)'}`)
+    const ref = parseDocumentName(documentName)
+    if (!ref) throw new Error('Invalid document name')
 
-    // Encode the entire current state. This is what we'll replay on load.
+    const table = ref.type === 'note' ? 'notes' : 'code_sessions'
+    console.log(`onStoreDocument: ${ref.type}:${ref.id} user=${context?.userId ?? '(none)'}`)
+
     const state = Y.encodeStateAsUpdate(document)
-
-    // Convert Uint8Array → Buffer for the Supabase client. The PostgREST
-    // bytea binding accepts a node Buffer cleanly.
     const buffer = Buffer.from(state)
 
     const { error } = await adminSupabase
-      .from('notes')
+      .from(table)
       .update({
         ydoc_state: buffer,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', noteId)
+      .eq('id', ref.id)
 
     if (error) {
-      // Log loudly. Throwing here aborts the store; Hocuspocus will retry
-      // on the next debounce window. Don't swallow.
-      console.error('onStoreDocument: failed to save', error)
+      console.error('onStoreDocument failed', error)
       throw error
     }
   },

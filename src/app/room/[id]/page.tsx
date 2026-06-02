@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { CreateNoteForm } from './create-note-form'
+import { CodePanel } from './code-panel'  
 
 export default async function RoomPage({
   params,
@@ -14,6 +15,11 @@ export default async function RoomPage({
 
   const supabase = await createClient()
 
+
+  const {
+  data: { user },
+} = await supabase.auth.getUser()
+if (!user) notFound()
   // Fetch the room. RLS does the work: if the user isn't a member of this
   // room, this returns no row, and we show a 404 — which is the right
   // behavior (we don't want to reveal "this room exists but you can't see
@@ -38,6 +44,34 @@ export default async function RoomPage({
     .select('id, title, updated_at')
     .eq('room_id', roomId)
     .order('updated_at', { ascending: false })
+
+  // Auth session for the WS token (same as note page).
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+  if (!session) {
+    notFound()
+  }
+
+  // Get-or-create the room's single code session. Idempotent — running this
+  // every page load is fine because the RPC uses INSERT ... ON CONFLICT.
+  const { data: codeSession, error: csError } = await supabase
+    .rpc('get_or_create_code_session', { p_room_id: room.id })
+    .single()
+
+  if (csError || !codeSession) {
+    console.error('get_or_create_code_session failed', csError)
+    notFound()
+  }
+
+  // Display name fallback for awareness/run-attribution.
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('display_name, email')
+    .eq('id', user.id)
+    .maybeSingle()
+  const displayName =
+    profile?.display_name || profile?.email?.split('@')[0] || 'Anonymous'
 
   return (
     <main className="min-h-screen bg-background p-6">
@@ -87,6 +121,13 @@ export default async function RoomPage({
             </p>
           )}
         </section>
+
+        <CodePanel
+          roomId={room.id}
+          codeSessionId={codeSession.id}
+          token={session.access_token}
+          user={{ id: user.id, name: displayName }}
+        />
       </div>
     </main>
   )

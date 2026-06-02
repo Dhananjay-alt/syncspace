@@ -59,12 +59,15 @@ export function NoteEditor({
   // Why not useState + lazy initializer? useMemo gives us the same lifetime
   // semantics and reads more naturally for derived objects. Both work.
   // ───────────────────────────────────────────────────────────────────────────
+  
+  console.log('[NoteEditor] mounted with', { noteId, hasToken: !!token, tokenLen: token?.length ?? 0 })
+  
   const ydoc = useMemo(() => new Y.Doc(), [noteId])
 
   const provider = useMemo(() => {
     return new HocuspocusProvider({
       url: process.env.NEXT_PUBLIC_WS_URL!,
-      name: noteId,         // ← becomes the URL path; server uses it as note id
+      name: `note:${noteId}`,         // ← becomes the URL path; server uses it as note id
       document: ydoc,
       token,                // ← the user's Supabase access token; the server's
                             //   onAuthenticate hook validates this and checks
@@ -82,6 +85,14 @@ export function NoteEditor({
     // pass 3 for why that's deliberate and what we do about refreshes).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId, ydoc])
+
+
+    useEffect(() => {
+    console.log('[provider] effect ran. status:', provider.status)
+    provider.on('status', (e: any) => console.log('[provider] status event:', e.status))
+    provider.on('synced', () => console.log('[provider] SYNCED'))
+    provider.on('disconnect', () => console.log('[provider] disconnect'))
+  }, [provider])
 
   // ───────────────────────────────────────────────────────────────────────────
   // Awareness: tell other peers who we are. This must happen after the
@@ -144,6 +155,7 @@ export function NoteEditor({
   // ───────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
+      console.log('[NoteEditor] UNMOUNT cleanup running at', Date.now())
       provider.destroy()
       ydoc.destroy()
     }
@@ -163,7 +175,7 @@ export function NoteEditor({
         StarterKit.configure({
           history: false, // ← required when using Collaboration
         }),
-        Collaboration.configure({ document: ydoc }),
+        Collaboration.configure({ document: ydoc, field: 'default' }),
         CollaborationCursor.configure({
           provider,
           user: {

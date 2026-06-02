@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+exec-server/node_modules
+ws-server/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -33,6 +35,7 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 ws-server/.env
+exec-server/.env
 
 # vercel
 .vercel
