@@ -52,3 +52,42 @@ export async function createNote(
   revalidatePath(`/room/${roomId}`)
   return null
 }
+
+export type DeleteNoteState = {
+  error: string | null
+} | null
+
+export async function deleteNote(noteId: string, roomId: string) {
+  const supabase = await createClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'You must be signed in.' }
+  }
+
+  // No explicit membership check needed — the notes_delete_members RLS
+  // policy enforces it at the database. If the user isn't a member of
+  // the room owning this note, the delete returns 0 rows affected and
+  // we treat it as "not authorized" (RLS hides the row).
+  //
+  // We pass roomId only to scope the delete to the URL-claimed room, as
+  // belt + braces against a tampered URL.
+  const { error } = await supabase
+    .from('notes')
+    .delete()
+    .eq('id', noteId)
+    .eq('room_id', roomId)
+
+  if (error) {
+    if (error.code === '42501') {
+      return { error: 'You do not have access to this note.' }
+    }
+    console.error('deleteNote failed:', error)
+    return { error: 'Could not delete note. Please try again.' }
+  }
+
+  revalidatePath(`/room/${roomId}`)
+  return null
+}
