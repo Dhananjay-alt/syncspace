@@ -1,5 +1,6 @@
 // src/app/room/[id]/note/[noteId]/page.tsx
 import { notFound } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { NoteEditor } from './note-editor'
 
@@ -38,7 +39,7 @@ export default async function NotePage({
   // room, no row comes back, and we 404 (don't leak existence).
   const { data: note } = await supabase
     .from('notes')
-    .select('id, title, room_id')
+    .select('id, title, room_id, rooms(name)')
     .eq('id', noteId)
     .eq('room_id', roomId) // belt + braces; URL could be tampered
     .maybeSingle()
@@ -46,6 +47,8 @@ export default async function NotePage({
   if (!note) {
     notFound()
   }
+
+  const roomName = (note.rooms as { name: string } | null)?.name ?? 'Room'
 
   // Display name fallback. We pull from the profile if it has one, else
   // use the email's local-part. For the hackathon this is fine; in a
@@ -64,6 +67,17 @@ export default async function NotePage({
   return (
     <main className="min-h-screen bg-background p-6">
       <div className="mx-auto max-w-3xl">
+        <nav className="flex items-center gap-2 text-xs text-muted-foreground mb-6">
+          <Link href="/rooms" className="hover:text-foreground transition-colors">
+            Rooms
+          </Link>
+          <span>/</span>
+          <Link href={`/room/${roomId}`} className="hover:text-foreground transition-colors">
+            {roomName}
+          </Link>
+          <span>/</span>
+          <span className="text-foreground">{note.title}</span>
+        </nav>
         <NoteEditor
           noteId={note.id}
           noteTitle={note.title}
