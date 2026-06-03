@@ -41,7 +41,7 @@ export default async function LandingPage() {
       <nav className="border-b border-border/40 backdrop-blur-sm">
         <div className="mx-auto max-w-6xl flex items-center justify-between px-6 py-4">
           <Link href="/" className="font-semibold tracking-tight">
-            Tandem
+            SyncSpace
           </Link>
 
           {/* Conditional nav right side: logged-out users see auth CTAs;

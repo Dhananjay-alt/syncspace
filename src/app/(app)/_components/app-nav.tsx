@@ -24,7 +24,7 @@ export function AppNav({
             href="/"
             className="font-semibold tracking-tight hover:text-foreground/80 transition-colors"
           >
-            Tandem
+            SyncSpace
           </Link>
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <Link

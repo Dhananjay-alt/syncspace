@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SyncSpace
 
-## Getting Started
+Real-time collaborative study workspace built for the Nebula competition (MDG Space, IIT Roorkee).
 
-First, run the development server:
+## Features
+
+- Real-time collaborative notes (Yjs CRDTs + Tiptap)
+- Shared Python code editor (Yjs + Monaco)
+- Sandboxed code execution with shared output (Docker)
+- Multi-tenant rooms with invite codes
+- Authentication via Supabase
+
+## Architecture
+
+Three independent services:
+
+- **Next.js app** — UI, auth, API routes
+- **Hocuspocus WebSocket server** (`ws-server/`) — real-time collaboration via Yjs
+- **Exec-server** (`exec-server/`) — sandboxed Docker code execution
+
+Database: Supabase Postgres with row-level security enforcing tenant isolation at the database layer.
+
+## Technical anchors
+
+1. **CRDT-based collaborative editing** — Yjs for conflict-free document merging, Hocuspocus for stateful WebSocket sync, snapshot persistence to Postgres.
+2. **Sandboxed code execution** — Disposable Docker containers per run with `--network=none`, `--read-only`, memory/CPU/PID limits, wall-clock timeout, and dropped capabilities.
+3. **Multi-tenant Postgres with RLS** — Every tenant-scoped query gated by row-level security; the database, not application code, enforces isolation.
+4. **Real-time WebSocket engineering** — Custom Hocuspocus hooks for auth (validates JWT + RLS-checked membership), document load/store, and awareness routing.
+
+## Running locally
+
+Requirements: Node 20+, Docker, a Supabase project.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Apply migrations (in Supabase SQL Editor): supabase/migrations/0001 through 0005
+
+# Set env vars (see .env.example in each project)
+
+# Build the Docker sandbox image
+cd exec-server && docker build -t nebula-python-sandbox:latest -f docker/python.Dockerfile docker/
+
+# Run all three services
+cd ws-server && npm install && npm run dev
+cd exec-server && npm install && npm run dev
+cd ../ && npm install && npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Built solo in 5 days.
