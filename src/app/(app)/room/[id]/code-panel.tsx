@@ -135,7 +135,9 @@ export function CodePanel({
     const onStatus = ({ status }: { status: WebSocketStatus }) =>
       setStatus(status)
     provider.on('status', onStatus)
-    return () => provider.off('status', onStatus)
+    return () => {
+      provider.off('status', onStatus)
+    }
   }, [provider])
   // ───────────────────────────────────────────────────────────────────────
   // Run: pull current code from Y.Text, POST to /api/run, write result
