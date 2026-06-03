@@ -20,7 +20,7 @@ export function AnimatedHero() {
       transition: {
         delay,
         duration: 0.5,
-        ease: [0.22, 1, 0.36, 1], // "ease-out-quart" — feels confident, not snappy
+        ease: [0.22, 1, 0.36, 1] as const, // "ease-out-quart" — feels confident, not snappy
       },
     }),
   }

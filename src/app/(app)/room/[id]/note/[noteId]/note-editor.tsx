@@ -60,7 +60,6 @@ export function NoteEditor({
   // semantics and reads more naturally for derived objects. Both work.
   // ───────────────────────────────────────────────────────────────────────────
   
-  console.log('[NoteEditor] mounted with', { noteId, hasToken: !!token, tokenLen: token?.length ?? 0 })
   
   const ydoc = useMemo(() => new Y.Doc(), [noteId])
 
@@ -85,14 +84,6 @@ export function NoteEditor({
     // pass 3 for why that's deliberate and what we do about refreshes).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId, ydoc])
-
-
-    useEffect(() => {
-    console.log('[provider] effect ran. status:', provider.status)
-    provider.on('status', (e: any) => console.log('[provider] status event:', e.status))
-    provider.on('synced', () => console.log('[provider] SYNCED'))
-    provider.on('disconnect', () => console.log('[provider] disconnect'))
-  }, [provider])
 
   // ───────────────────────────────────────────────────────────────────────────
   // Awareness: tell other peers who we are. This must happen after the
@@ -155,7 +146,6 @@ export function NoteEditor({
   // ───────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
-      console.log('[NoteEditor] UNMOUNT cleanup running at', Date.now())
       provider.destroy()
       ydoc.destroy()
     }

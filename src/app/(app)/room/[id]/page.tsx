@@ -52,13 +52,14 @@ export default async function RoomPage({
   if (!session) notFound()
 
   // Idempotent get-or-create for the room's single code session.
-  const { data: codeSession, error: csError } = await supabase
+  const { data: codeSessionRaw, error: csError } = await supabase
     .rpc('get_or_create_code_session', { p_room_id: room.id })
     .single()
-  if (csError || !codeSession) {
+  if (csError || !codeSessionRaw) {
     console.error('get_or_create_code_session failed', csError)
     notFound()
   }
+  const codeSession = codeSessionRaw as unknown as { id: string }
 
   // Display name fallback for the user prop on collab components.
   const { data: profile } = await supabase

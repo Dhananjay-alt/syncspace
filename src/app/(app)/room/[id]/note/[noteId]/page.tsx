@@ -48,7 +48,7 @@ export default async function NotePage({
     notFound()
   }
 
-  const roomName = (note.rooms as { name: string } | null)?.name ?? 'Room'
+  const roomName = (note.rooms as unknown as { name: string } | null)?.name ?? 'Room'
 
   // Display name fallback. We pull from the profile if it has one, else
   // use the email's local-part. For the hackathon this is fine; in a
