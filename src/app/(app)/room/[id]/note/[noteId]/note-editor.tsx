@@ -9,18 +9,12 @@ import StarterKit from '@tiptap/starter-kit'
 import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCursor from '@tiptap/extension-collaboration-cursor'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PRESENCE: a tiny user color palette. Each connected user gets one assigned
-// from the hash of their user id, so the same person gets the same color
-// across reloads. CollaborationCursor uses this for their remote cursor tint.
-// ─────────────────────────────────────────────────────────────────────────────
 const COLORS = [
   '#f87171', '#fb923c', '#fbbf24', '#a3e635',
   '#34d399', '#22d3ee', '#60a5fa', '#a78bfa', '#f472b6',
 ]
 
 function colorForUser(userId: string): string {
-  // Deterministic hash → palette index. Same user, same color, every time.
   let hash = 0
   for (let i = 0; i < userId.length; i++) {
     hash = (hash * 31 + userId.charCodeAt(i)) | 0
@@ -50,17 +44,7 @@ export function NoteEditor({
   token: string
   user: { id: string; name: string }
 }) {
-  // ───────────────────────────────────────────────────────────────────────────
-  // Y.Doc + provider are created ONCE per mount via useMemo. They MUST NOT be
-  // recreated on rerender — every recreation would tear down the WebSocket,
-  // throw away local state, and reconnect. Memoizing on [noteId] means they
-  // only get rebuilt if you navigate to a different note, which is correct.
-  //
-  // Why not useState + lazy initializer? useMemo gives us the same lifetime
-  // semantics and reads more naturally for derived objects. Both work.
-  // ───────────────────────────────────────────────────────────────────────────
-  
-  
+  // useMemo on [noteId] — recreating on every render would tear down the WebSocket and lose state
   const ydoc = useMemo(() => new Y.Doc(), [noteId])
 
   const provider = useMemo(() => {
@@ -72,24 +56,14 @@ export function NoteEditor({
                             //   onAuthenticate hook validates this and checks
                             //   room membership. NOTHING is loaded without it.
 
-      // Push our identity into awareness as soon as we connect. Other peers
-      // will read this off awareness to render our cursor/name. Note that
-      // awareness is fully separate from the document — never persisted.
       onConnect: () => {
-        // no-op; awareness is set via the awareness setter below
+        // no-op; awareness is set in the effect below
       },
     })
-    // We deliberately do NOT include `token` or `user` in deps. Memoizing on
-    // noteId alone keeps the provider stable across token refreshes (see
-    // pass 3 for why that's deliberate and what we do about refreshes).
+    // token/user intentionally excluded — provider must stay stable across token refreshes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId, ydoc])
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Awareness: tell other peers who we are. This must happen after the
-  // provider exists. We set it on every mount; on the wire it's a small
-  // ephemeral broadcast, harmless to repeat.
-  // ───────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     provider.setAwarenessField('user', {
       id: user.id,
@@ -98,12 +72,6 @@ export function NoteEditor({
     } satisfies AwarenessUser)
   }, [provider, user.id, user.name])
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Local state mirrors of provider events, for rendering connection status
-  // and the presence pill list. We subscribe to provider events and copy
-  // changes into React state — React doesn't know about provider's internal
-  // changes otherwise.
-  // ───────────────────────────────────────────────────────────────────────────
   const [status, setStatus] = useState<WebSocketStatus>(
     WebSocketStatus.Connecting
   )
@@ -114,9 +82,7 @@ export function NoteEditor({
       setStatus(status)
 
     const onAwareness = () => {
-      // awareness.getStates() returns Map<clientId, state>. Each remote peer
-      // (and we ourselves) appears here. We filter out our own entry so the
-      // presence row shows OTHER people, not "you".
+      // filter out self — presence list shows others only
       const states = provider.awareness?.getStates() ?? new Map()
       const myClientId = provider.awareness?.clientID
       const others: PeerState[] = []
@@ -139,11 +105,6 @@ export function NoteEditor({
     }
   }, [provider])
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Cleanup: when this component unmounts (you navigate away), tear down
-  // the provider and destroy the Y.Doc. Without this you'd leak WebSocket
-  // connections and Y.Doc memory across navigations.
-  // ───────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       provider.destroy()
@@ -151,19 +112,11 @@ export function NoteEditor({
     }
   }, [provider, ydoc])
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // The Tiptap editor itself. Note two critical things:
-  //   1. StarterKit's `history` is DISABLED — Yjs provides its own undo
-  //      stack that's CRDT-aware. Having both produces broken undo behavior
-  //      (your local undo would undo a remote change, etc.). Always disable.
-  //   2. Collaboration binds the editor to the Y.Doc. CollaborationCursor
-  //      hooks into awareness to render remote cursors with their colors.
-  // ───────────────────────────────────────────────────────────────────────────
   const editor = useEditor(
     {
       extensions: [
         StarterKit.configure({
-          history: false, // ← required when using Collaboration
+          history: false, // Yjs has its own CRDT-aware undo; enabling both breaks undo
         }),
         Collaboration.configure({ document: ydoc, field: 'default' }),
         CollaborationCursor.configure({
@@ -174,9 +127,6 @@ export function NoteEditor({
           },
         }),
       ],
-      // Tiptap injects classes onto the editable element; this keeps the
-      // prose styling consistent with the rest of the app. Tailwind's
-      // typography plugin would be ideal here, but plain styling works.
       editorProps: {
         attributes: {
           class:
@@ -186,16 +136,11 @@ export function NoteEditor({
       // Avoid SSR mismatch warnings — Tiptap renders on the client only.
       immediatelyRender: false,
     },
-    // Rebuild the editor when the underlying doc changes (i.e. note id change).
     [ydoc]
   )
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Render
-  // ───────────────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      {/* Header: title + presence + status */}
       <div className="flex items-start justify-between gap-4">
         <h1 className="text-2xl font-semibold tracking-tight">{noteTitle}</h1>
         <div className="flex items-center gap-3">
@@ -204,7 +149,6 @@ export function NoteEditor({
         </div>
       </div>
 
-      {/* The editor */}
       <div className="rounded-lg border border-border bg-card p-4">
         <EditorContent editor={editor} />
       </div>

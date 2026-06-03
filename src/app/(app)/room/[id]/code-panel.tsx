@@ -40,12 +40,7 @@ export function CodePanel({
   token: string
   user: { id: string; name: string }
 }) {
-  // ───────────────────────────────────────────────────────────────────────
-  // The Y.Doc holds BOTH the code text AND the output. Same doc, same
-  // server, same auth — one connection covers both. The two shared types:
-  //   ydoc.getText('code')   ← bound to Monaco via y-monaco
-  //   ydoc.getMap('output')  ← written on Run, observed by all peers
-  // ───────────────────────────────────────────────────────────────────────
+  // one doc for both getText('code') and getMap('output') — same connection, same auth
   const ydoc = useMemo(() => new Y.Doc(), [codeSessionId])
 
   const provider = useMemo(() => {
@@ -58,7 +53,6 @@ export function CodePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [codeSessionId, ydoc])
 
-  // Cleanup on unmount.
   useEffect(() => {
     return () => {
       provider.destroy()
@@ -66,21 +60,14 @@ export function CodePanel({
     }
   }, [provider, ydoc])
 
-  // ───────────────────────────────────────────────────────────────────────
-  // Monaco binding. Lazy — we only attach y-monaco after Monaco has actually
-  // mounted, because y-monaco needs the editor instance.
-  // ───────────────────────────────────────────────────────────────────────
   const [bindingReady, setBindingReady] = useState(false)
 
   function handleEditorMount(
     editorInstance: editor.IStandaloneCodeEditor
   ) {
-    // Lazy-import y-monaco so it's not in the SSR bundle.
     import('y-monaco').then(({ MonacoBinding }) => {
       const yText = ydoc.getText('code')
-      // The binding maps Monaco's model edits to Y.Text ops and vice versa.
-      // The last arg ties the binding to this editor's awareness for cursors;
-      // we pass the provider's awareness so other peers see our caret.
+      // last arg wires cursors to provider awareness so other peers see our caret
       new MonacoBinding(
         yText,
         editorInstance.getModel()!,
@@ -91,10 +78,6 @@ export function CodePanel({
     })
   }
 
-  // ───────────────────────────────────────────────────────────────────────
-  // Output subscription. The Y.Map at 'output' is updated by whoever runs
-  // code; everyone else observes it via the .observe() callback.
-  // ───────────────────────────────────────────────────────────────────────
   const [output, setOutput] = useState<ExecResult | null>(null)
 
   useEffect(() => {
@@ -123,9 +106,6 @@ export function CodePanel({
   return () => outputMap.unobserve(handler)
 }, [ydoc])
 
-  // ───────────────────────────────────────────────────────────────────────
-  // Connection status (same pattern as the note editor).
-  // ───────────────────────────────────────────────────────────────────────
   const [status, setStatus] = useState<WebSocketStatus>(
     WebSocketStatus.Connecting
   )
@@ -137,10 +117,6 @@ export function CodePanel({
       provider.off('status', onStatus)
     }
   }, [provider])
-  // ───────────────────────────────────────────────────────────────────────
-  // Run: pull current code from Y.Text, POST to /api/run, write result
-  // into the Y.Map. Yjs syncs the map update to all peers automatically.
-  // ───────────────────────────────────────────────────────────────────────
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -165,8 +141,7 @@ export function CodePanel({
 
       const data = (await res.json()) as ExecResult
 
-      // Write the result into the shared Y.Map. transact() batches the
-      // writes so they sync to peers as one update, not seven.
+      // transact() batches writes so they sync to peers as one update, not seven
       const outputMap = ydoc.getMap('output')
       ydoc.transact(() => {
         outputMap.set('stdout', data.stdout)

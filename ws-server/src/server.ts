@@ -1,30 +1,12 @@
-// =============================================================================
-// Hocuspocus collaborative editing server
-// =============================================================================
-// This is a small stateful Node server that holds Y.Doc replicas in memory
-// (one per active note) and orchestrates:
-//   1. WebSocket connections from clients
-//   2. CRDT update fan-out between clients in the same note
-//   3. Awareness (presence) fan-out — ephemeral, not persisted
-//   4. Authentication on connection (the security gate)
-//   5. Document load from Supabase on first open
-//   6. Debounced document persistence back to Supabase
-//
-// Architecture note: we use the Supabase service_role key for DB I/O because
-// this process is the system, not a user. Authorization is enforced upfront
-// in onAuthenticate by validating the client's user JWT and verifying their
-// room_members entry — service_role is never used to bypass user-permission
-// checks, only to perform persistence operations on behalf of authorized users.
-// =============================================================================
+// service_role key used for persistence only — auth is enforced upfront in
+// onAuthenticate via a user-scoped client. service_role never bypasses permission checks.
 
 import 'dotenv/config'
 import { Server } from '@hocuspocus/server'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import * as Y from 'yjs'
 
-// --- env validation ---------------------------------------------------------
-// Fail loudly at startup if env is misconfigured. Better than a confusing
-// runtime error 30 minutes into a demo.
+// fail loud at startup rather than a confusing runtime error later
 const PORT = Number(process.env.PORT ?? 1234)
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
@@ -37,34 +19,16 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   process.exit(1)
 }
 
-// --- Supabase clients -------------------------------------------------------
-// We need TWO kinds of Supabase clients in this server:
-//
-//   1. `adminSupabase` — created once, uses service_role. Used for all
-//      persistence operations (reading/writing `notes.ydoc_state`). It
-//      bypasses RLS by design.
-//
-//   2. A per-request user-scoped client created INSIDE onAuthenticate, using
-//      the user's JWT. We use this to verify the user is a member of the
-//      room — querying through RLS so the database itself enforces the check.
-//      We never use service_role for permission checks; that would be the
-//      classic "I forgot to write the if-statement" anti-pattern.
-
+// adminSupabase: service_role for persistence (bypasses RLS by design)
+// user-scoped client built per-request in onAuthenticate to check membership via RLS
 const adminSupabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: {
-    // Server context: no session/cookie persistence. Each request stands alone.
+    // server context — no session/cookie persistence
     persistSession: false,
     autoRefreshToken: false,
   },
 })
 
-// --- helpers ----------------------------------------------------------------
-
-/**
- * Document names have the shape `<type>:<id>` where type is 'note' or 'code'.
- * This lets one Hocuspocus server serve multiple kinds of documents while
- * routing each to the right table for auth and persistence.
- */
 type DocRef =
   | { type: 'note'; id: string }
   | { type: 'code'; id: string }
@@ -77,10 +41,6 @@ function parseDocumentName(documentName: string): DocRef | null {
   return null
 }
 
-/**
- * Build a user-scoped Supabase client given a user JWT. Queries via this
- * client are subject to RLS as that user.
- */
 function userSupabaseFromToken(token: string): SupabaseClient {
   return createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
     global: { headers: { Authorization: `Bearer ${token}` } },
@@ -88,13 +48,8 @@ function userSupabaseFromToken(token: string): SupabaseClient {
   })
 }
 
-// --- Hocuspocus server ------------------------------------------------------
-
 const server = new Server({
   port: PORT,
-  // Hocuspocus accepts the host as 0.0.0.0 by default; fine for both local
-  // dev and Railway's container networking.
-
 
 async onAuthenticate({ token, documentName }) {
     console.log('[onAuthenticate] documentName:', documentName, 'tokenPresent:', !!token)
@@ -103,16 +58,13 @@ async onAuthenticate({ token, documentName }) {
     const ref = parseDocumentName(documentName)
     if (!ref) throw new Error('Invalid document name')
 
-    // Validate the JWT — confirms the user is who they say they are.
     const { data: userData, error: userError } =
       await adminSupabase.auth.getUser(token)
     if (userError || !userData?.user) throw new Error('Invalid auth token')
     const user = userData.user
 
-    // Permission check via RLS: select the document through the user's
-    // scope. If they're not a member of the owning room, RLS hides the
-    // row and we treat it as "not authorized" (don't distinguish from
-    // "doesn't exist" — same reason 404 vs 403 was collapsed elsewhere).
+    // RLS does the membership check — if the user isn't in the room the row is hidden.
+    // We collapse 404 vs 403 deliberately (consistent with the rest of the app).
     const userSupabase = userSupabaseFromToken(token)
 
     if (ref.type === 'note') {
@@ -212,28 +164,11 @@ async onLoadDocument({ documentName, context }) {
     }
   },
 
-  // Tunable: how long the server waits after the last change before calling
-  // onStoreDocument. Default is 2000ms. Lower = more writes, fresher state
-  // if the server dies. Higher = fewer writes, more potential loss.
-  // 2 seconds is the sweet spot for collaborative editing.
-  debounce: 2000,
-
-  // Hard limit: regardless of debounce, store at least this often during
-  // sustained editing. Otherwise a user who never pauses could go a long
-  // time without their work hitting durable storage.
-  maxDebounce: 10000,
+  debounce: 2000,     // ms after last change before persisting; 2s is the sweet spot for collab
+  maxDebounce: 10000, // force persist after 10s of sustained editing with no pause
 })
 
-// --- helpers continued ------------------------------------------------------
-
-/**
- * Supabase's PostgREST returns `bytea` columns as one of two shapes depending
- * on client version and column metadata:
- *   - a hex string like "\x4a8e..." (the legacy default)
- *   - or, sometimes, a base64 string
- *   - or, in newer JS client versions, an actual Uint8Array
- * We normalize to Uint8Array so the rest of the code doesn't care.
- */
+// Supabase returns bytea as hex (\x...), base64, or Uint8Array depending on client version — normalize.
 function toUint8Array(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value
   if (Buffer.isBuffer(value)) return new Uint8Array(value)
@@ -252,8 +187,6 @@ function toUint8Array(value: unknown): Uint8Array {
   }
   throw new Error(`Cannot decode ydoc_state of type ${typeof value}`)
 }
-
-// --- start ------------------------------------------------------------------
 
 server.listen()
 console.log(`Hocuspocus listening on ws://localhost:${PORT}`)
