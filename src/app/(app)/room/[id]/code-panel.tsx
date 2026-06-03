@@ -114,11 +114,9 @@ export function CodePanel({
     }
   }
 
-  console.log('[CodePanel] output effect ran. initial map size:', outputMap.size)
   setOutput(readMap())
   
   const handler = () => {
-    console.log('[CodePanel] output map changed! size:', outputMap.size, 'stdout:', outputMap.get('stdout'))
     setOutput(readMap())
   }
   outputMap.observe(handler)
@@ -180,7 +178,6 @@ export function CodePanel({
         outputMap.set('runnerName', user.name)
         outputMap.set('runAt', Date.now())
       })
-      console.log('[CodePanel] wrote output. map size after write:', outputMap.size, 'stdout:', outputMap.get('stdout'))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error')
     } finally {

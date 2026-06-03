@@ -190,14 +190,18 @@ async onLoadDocument({ documentName, context }) {
 
     const table = ref.type === 'note' ? 'notes' : 'code_sessions'
     console.log(`onStoreDocument: ${ref.type}:${ref.id} user=${context?.userId ?? '(none)'}`)
-
     const state = Y.encodeStateAsUpdate(document)
-    const buffer = Buffer.from(state)
+    // Postgres bytea text format: '\x' followed by hex pairs. Supabase's JS
+    // client can't send raw binary via the JSON API — it would Buffer.toJSON()
+    // the bytes into a {type:'Buffer',data:[...]} object and Postgres would
+    // store the literal JSON text as bytes (which then fails to decode as Yjs).
+    // Encoding to hex string up-front gives Postgres exactly what bytea expects.
+    const hexEncoded = '\\x' + Buffer.from(state).toString('hex')
 
     const { error } = await adminSupabase
       .from(table)
       .update({
-        ydoc_state: buffer,
+        ydoc_state: hexEncoded,
         updated_at: new Date().toISOString(),
       })
       .eq('id', ref.id)
