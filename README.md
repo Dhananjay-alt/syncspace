@@ -2,7 +2,7 @@
 
 Real-time collaborative study workspace. Built solo in 5 days for the Nebula competition (MDG Space, IIT Roorkee).
 
-**Live demo:** https://syncspace-avmot867a-coderxdhananjay07-2865s-projects.vercel.app/
+**Live demo:** https://syncspace-weld.vercel.app/
 
 ## What it does
 
