@@ -2,6 +2,8 @@
 
 Real-time collaborative study workspace. Built solo in 5 days for the Nebula competition (MDG Space, IIT Roorkee).
 
+**Live demo:** https://syncspace-avmot867a-coderxdhananjay07-2865s-projects.vercel.app/
+
 ## What it does
 
 Study rooms where members share collaborative notes, a Python code editor, and live execution output. Everything in a room is synced in real time — type in one window, see it in another instantly. Code runs in a sandboxed Docker container; the result appears in everyone's output panel.
@@ -39,6 +41,20 @@ Some things that weren't obvious during the build:
 - Code session output (run results) is written into a shared `Y.Map` on the same Y.Doc as the code editor. When anyone clicks Run, the result lands in the map and Yjs syncs it to every connected peer. Same channel as the editor itself.
 
 - The exec-server authenticates the Next.js app via a shared secret in a header. The comparison uses `crypto.timingSafeEqual` to avoid timing attacks. The exec-server never speaks to the database — it only runs code for its single trusted caller.
+
+## Deployment
+
+The live demo runs as two deployed services plus a managed database:
+
+- **Next.js app** → Vercel
+- **Hocuspocus WebSocket server** → Railway, reachable at `wss://syncspace-production-79f8.up.railway.app`
+- **Supabase Postgres** → managed by Supabase
+
+**The code-execution service is not deployed publicly.** Free-tier hosted platforms (Railway, Vercel, similar) sandbox their containers and don't expose a Docker socket to user processes, which means a Node service can't spawn child containers from inside them. That breaks our security model — the whole point of the exec-server is the disposable per-run Docker container with `--network=none`, `--read-only`, PID/memory caps, and dropped capabilities. Running it on a platform that doesn't support nested containers would either compromise the sandbox (run Python directly via subprocess, lose the isolation) or stop working.
+
+So on the live demo, the **Run** button returns an error. Collaboration on notes and the code editor itself works end-to-end. To see the sandbox actually defeating adversarial inputs (`while True: pass`, `urllib.request.urlopen`, fork bombs, filesystem writes), see the demo video or run locally.
+
+A future iteration would host the exec-server on a small VPS with full Docker daemon access (DigitalOcean, Hetzner, etc.) and keep the same shared-secret protocol between Next.js and the executor.
 
 ## Running locally
 
